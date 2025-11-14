@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>pipe demo </title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ body{font-family:Arial;margin:18px;background:#f6f7fb;color:#111}
+ h1{font-size:18px;margin-bottom:10px}
+ .ctrl{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+ canvas{background:linear-gradient(#eef6ff,#eaf0ff);border-radius:8px;box-shadow:0 4px 10px rgba(20,30,60,0.06)}
+ .stats{margin-top:10px;padding:8px;background:#fff;border-radius:6px;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,0.04)}
+ button{padding:6px 10px;border-radius:6px;border:1px solid #d0d6e8;background:#fff;cursor:pointer}
+ .note{font-size:12px;color:#444;margin-top:8px}
+</style>
+</head>
+<body>
+<h1>Laminar → Turbulent (simple)</h1>
+
+<div class="ctrl">
+ <label>Re: <input id="r" type="range" min="100" max="10000" step="50" value="1000" style="width:300px"></label>
+ <b id="rval">1000</b>
+ <button id="play">Pause</button>
+ <button id="rst">Reset</button>
+</div>
+
+<canvas id="cv" width="760" height="420"></canvas>
+
+<div class="stats">
+ <div>β: <b id="beta">—</b></div>
+ <div>&lt;U&gt;: <b id="uavg">—</b></div>
+ <div>turb: <b id="turb">—</b></div>
+</div>
+
+<script>
+var cv = document.getElementById('cv');
+var ctx = cv.getContext('2d');
+
+var rS = document.getElementById('r');
+var rval = document.getElementById('rval');
+var playBtn = document.getElementById('play');
+var rst = document.getElementById('rst');
+
+var betaEl = document.getElementById('beta');
+var uEl = document.getElementById('uavg');
+var tEl = document.getElementById('turb');
+
+var W = cv.width, H = cv.height;
+var Re = Number(rS.value);
+var running = true;
+
+var PAD = 52;
+var NUM_PARTICLES = 800;
+var Particles = [];
+var energyHistory = [];
+
+function init_particles(){
+ Particles = [];
+ for(var i=0;i<NUM_PARTICLES;i++){
+  Particles.push({
+    x: Math.random()*(W-2*PAD)+PAD,
+    y: Math.random()*(H-2*PAD)+PAD,
+    vx: 0, vy: 0
+  });
+ }
+ energyHistory = [];
+}
+init_particles();
+
+function velocity_profile(y_pos){
+ var y_center = H/2;
+ var R = (H/2)-PAD;
+ var r = (y_pos - y_center)/R;
+ if(r<-1) r=-1;
+ if(r>1) r=1;
+ var v = 1 - r*r;
+ if(v<0) v=0;
+ return v;
+}
+
+function calculate_turbulence_intensity(R){
+ var Rc = 2300, Rmax=10000;
+ var t=(R-100)/(Rmax-100);
+ if(t<0) t=0;
+ if(t>1) t=1;
+ var b=(R-Rc)/(Rmax-Rc);
+ if(b<0) b=0;
+ var out=Math.pow(t,0.9)+1.5*b*b;
+ return out>1?1:out;
+}
+
+function step(dt){
+ var tf = calculate_turbulence_intensity(Re);
+ var sum_vx=0, sum_vx2=0;
+
+ for(var i=0;i<NUM_PARTICLES;i++){
+  var p=Particles[i];
+  var base=velocity_profile(p.y);
+
+  var tx=(Math.random()-0.5)*0.08*1.6*tf;
+  var ty=(Math.random()-0.5)*0.08*1.6*tf;
+
+  p.vx=0.9*p.vx+tx;
+  p.vy=0.9*p.vy+ty;
+
+  var vx=base*48 + p.vx*22;
+  var vy=p.vy*14*tf;
+
+  p.x+=vx*dt;
+  p.y+=vy*dt;
+
+  if(p.x>W-PAD) p.x=PAD+(p.x-(W-PAD));
+  if(p.x<PAD) p.x=(W-PAD)-(PAD-p.x);
+
+  if(p.y<PAD){ p.y=PAD+(PAD-p.y); p.vy*=-0.5; }
+  if(p.y>H-PAD){ p.y=H-PAD-(p.y-(H-PAD)); p.vy*=-0.5; }
+
+  sum_vx+=vx;
+  sum_vx2+=vx*vx;
+ }
+
+ var uavg=sum_vx/NUM_PARTICLES;
+ var u2=sum_vx2/NUM_PARTICLES;
+ var ke=0.5*u2;
+
+ energyHistory.push(ke);
+ if(energyHistory.length>300) energyHistory.shift();
+
+ var beta=u2/(uavg*uavg+1e-12);
+
+ return {u_avg_out:uavg, beta_out:beta, t_out:tf, ke_out:ke};
+}
+
+function draw(){
+ ctx.clearRect(0,0,W,H);
+
+ ctx.fillStyle='#f8fafe';
+ ctx.fillRect(PAD-6,PAD-6,W-2*PAD+12,H-2*PAD+12);
+ ctx.fillStyle='#fff';
+ ctx.fillRect(PAD,PAD,W-2*PAD,H-2*PAD);
+
+ ctx.strokeStyle='rgba(0,0,0,0.07)';
+ ctx.beginPath();
+ ctx.moveTo(PAD,H/2); ctx.lineTo(W-PAD,H/2); ctx.stroke();
+
+ for(var i=0;i<NUM_PARTICLES;i++){
+  var p=Particles[i];
+  var s=velocity_profile(p.y)+Math.abs(p.vx)*0.5;
+  var t=s/1.6; if(t>1)t=1;
+
+  var r=Math.floor(40+200*t);
+  var g=Math.floor(90-40*t);
+  var b=Math.floor(160+20*(1-t));
+
+  ctx.fillStyle="rgba("+r+","+g+","+b+",0.95)";
+  ctx.beginPath(); ctx.arc(p.x,p.y,2.2,0,2*Math.PI); ctx.fill();
+ }
+}
+
+var last=performance.now();
+function loop(now){
+ var dt=(now-last)/1000;
+ if(dt>0.05) dt=0.05;
+ last=now;
+
+ if(running){
+  var s=step(dt);
+  draw();
+  ctx.fillStyle='rgba(0,0,0,0.8)';
+  ctx.font='12px Arial';
+  ctx.fillText('Re = '+Math.round(Re),14,20);
+
+  betaEl.textContent=s.beta_out.toFixed(4);
+  uEl.textContent=s.u_avg_out.toFixed(3);
+  tEl.textContent=(s.t_out*100).toFixed(1)+'%';
+ }
+
+ requestAnimationFrame(loop);
+}
+
+rS.addEventListener('input',function(e){
+ Re=Number(e.target.value);
+ rval.textContent=Re;
+});
+
+playBtn.addEventListener('click',function(){
+ running=!running;
+ playBtn.textContent=running?'Pause':'Play';
+});
+
+rst.addEventListener('click',function(){
+ Re=1000;
+ rS.value=Re;
+ rval.textContent=Re;
+ init_particles();
+});
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
